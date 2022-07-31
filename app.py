@@ -7,6 +7,7 @@ import tweepy
 from flask import Flask, jsonify, make_response
 from flask_marshmallow import Marshmallow
 from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
 from marshmallow import fields
 
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAEkYWAEAAAAAiCZ95QEqxNKuluivi0dNKwu%2BUIA%3DpXPhzD5xrJFlCx6roDUnzjJ6jtuh8wr2AyPhfZls4g4Yo4kH8y"
@@ -17,6 +18,7 @@ query = '(context:152.825047692124442624 OR context:66.839160129752686593 OR con
 ma = Marshmallow()
 
 app = Flask(__name__)
+CORS(app)
 DB_NAME = 'db_market_grouping'
 app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
 db = SQLAlchemy(app)
@@ -78,16 +80,7 @@ class TweetSchema(ma.Schema):
     created_at = fields.DateTime()
 
 
-@app.route('/', methods=['GET'])
-def index():  # put application's code here
-    get_tweets = Tweet.query.all()
-    tweet_schema = TweetSchema(many=True)
-    tweets = tweet_schema.dump(get_tweets)
-    return make_response(jsonify({"data": tweets}))
-
-
-@app.route('/market-grouping', methods=['GET'])
-def market_grouping():
+def get_data_from_api():
     tweets_data = []
     tweets_user = []
 
@@ -133,15 +126,15 @@ def market_grouping():
     tweets_df = tweets_df.drop_duplicates()
     df = tweets_data_df.merge(tweets_df, left_on='author_id', right_on='author_id')
     df.to_sql(name='tweets', con=db.engine, index=False, if_exists='append')
-    get_tweets = Tweet.query.all()
-    tweet_schema = TweetSchema(many=True)
-    tweets = tweet_schema.dump(get_tweets)
 
+
+def social_network_analysis(tweets):
     tweets_db_df = pd.DataFrame(tweets)
 
     in_reply_to_user_df = tweets_db_df[tweets_db_df['in_reply_to_user_id'].notna()]
 
-    in_reply_to_user_df = in_reply_to_user_df.merge(tweets_db_df, left_on='in_reply_to_user_id', right_on='author_id')
+    in_reply_to_user_df = in_reply_to_user_df.merge(tweets_db_df, left_on='in_reply_to_user_id',
+                                                    right_on='author_id')
     in_reply_to_user_df = in_reply_to_user_df.rename(
         columns={"username_x": "target", "username_y": "source", "context_annotations_x": "context_annotations",
                  "text_x": "text", "tag_x": 'tag'})
@@ -187,7 +180,8 @@ def market_grouping():
             # Now you can add modularity information like we did the other metrics
     nx.set_node_attributes(G, modularity_dict, 'modularity')
 
-    context = {(j["source"], j["target"]): ast.literal_eval(j["context_annotations"]) for i, j in final_df.iterrows()}
+    context = {(j["source"], j["target"]): ast.literal_eval(j["context_annotations"]) for i, j in
+               final_df.iterrows()}
     nx.set_edge_attributes(G, context, "context")
 
     tags = {(j["source"], j["target"]): (j["tag"]) for i, j in final_df.iterrows()}
@@ -198,9 +192,31 @@ def market_grouping():
 
     filtered_dict = {k: v for (k, v) in modularity_dict.items() if v < 10}
 
-    d = nx.json_graph.node_link_data(G.subgraph(set(filtered_dict)))
+    return nx.json_graph.node_link_data(G.subgraph(set(filtered_dict)))
 
-    return make_response(jsonify({"data": d}))
+
+@app.route('/', methods=['GET'])
+def index():  # put application's code here
+    return make_response(jsonify({"data": "Hello world"}))
+
+
+@app.route('/market-grouping', methods=['GET'])
+def market_grouping():
+    get_tweets = Tweet.query.all()
+    tweet_schema = TweetSchema(many=True)
+    tweets = tweet_schema.dump(get_tweets)
+
+    if not tweets:
+        get_data_from_api()
+        db.session.commit()
+
+    get_tweets = Tweet.query.all()
+    tweet_schema = TweetSchema(many=True)
+    tweets = tweet_schema.dump(get_tweets)
+
+    graph_json = social_network_analysis(tweets)
+
+    return make_response(jsonify({"data": graph_json}))
 
 
 if __name__ == '__main__':
