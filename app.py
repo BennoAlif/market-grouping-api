@@ -90,7 +90,7 @@ def get_data_from_api():
                                                    "context_annotations"],
                                      user_fields=["username"],
                                      max_results=100,
-                                     expansions='author_id', limit=100):
+                                     expansions='author_id', limit=1):
         tweets_data += response.data
         tweets_user += response.includes["users"]
 
