@@ -20,7 +20,8 @@ ma = Marshmallow()
 app = Flask(__name__)
 CORS(app)
 DB_NAME = 'db_market_grouping'
-app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}'
+# app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:localhost:3306/{DB_NAME}'
 db = SQLAlchemy(app)
 
 
