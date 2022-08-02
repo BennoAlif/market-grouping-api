@@ -201,23 +201,23 @@ def index():  # put application's code here
     return make_response(jsonify({"data": "Hello world"}))
 
 
-@app.route('/market-grouping', methods=['GET'])
-def market_grouping():
-    get_tweets = Tweet.query.all()
-    tweet_schema = TweetSchema(many=True)
-    tweets = tweet_schema.dump(get_tweets)
+# @app.route('/market-grouping', methods=['GET'])
+# def market_grouping():
+#     get_tweets = Tweet.query.all()
+#     tweet_schema = TweetSchema(many=True)
+#     tweets = tweet_schema.dump(get_tweets)
 
-    if not tweets:
-        get_data_from_api()
-        db.session.commit()
+#     if not tweets:
+#         get_data_from_api()
+#         db.session.commit()
 
-    get_tweets = Tweet.query.all()
-    tweet_schema = TweetSchema(many=True)
-    tweets = tweet_schema.dump(get_tweets)
+#     get_tweets = Tweet.query.all()
+#     tweet_schema = TweetSchema(many=True)
+#     tweets = tweet_schema.dump(get_tweets)
 
-    graph_json = social_network_analysis(tweets)
+#     graph_json = social_network_analysis(tweets)
 
-    return make_response(jsonify({"data": graph_json}))
+#     return make_response(jsonify({"data": graph_json}))
 
 
 if __name__ == '__main__':
