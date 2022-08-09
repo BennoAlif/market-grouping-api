@@ -1,14 +1,14 @@
 import ast
-
-import networkx as nx
-import networkx.algorithms.community as nx_comm
-import pandas as pd
 import tweepy
-from flask import Flask, jsonify, make_response
-from flask_marshmallow import Marshmallow
-from flask_sqlalchemy import SQLAlchemy
+import pandas as pd
+import networkx as nx
 from flask_cors import CORS
 from marshmallow import fields
+from flask_sqlalchemy import SQLAlchemy
+from flask_marshmallow import Marshmallow
+from datetime import datetime, timedelta, date
+import networkx.algorithms.community as nx_comm
+from flask import Flask, jsonify, make_response, request
 
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAEkYWAEAAAAAiCZ95QEqxNKuluivi0dNKwu%2BUIA%3DpXPhzD5xrJFlCx6roDUnzjJ6jtuh8wr2AyPhfZls4g4Yo4kH8y"
 client = tweepy.Client(bearer_token=BEARER_TOKEN)
@@ -20,8 +20,8 @@ ma = Marshmallow()
 app = Flask(__name__)
 CORS(app)
 DB_NAME = 'db_market_grouping'
-app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}'
-# app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:localhost:3306/{DB_NAME}'
+# app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}'
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
 db = SQLAlchemy(app)
 
 
@@ -81,17 +81,19 @@ class TweetSchema(ma.Schema):
     created_at = fields.DateTime()
 
 
-def get_data_from_api():
+def get_data_from_api(start_time, end_time):
     tweets_data = []
     tweets_user = []
-
+    print("Ngambil dari API")
     for response in tweepy.Paginator(client.search_recent_tweets,
                                      query=query,
                                      tweet_fields=["created_at", "text", "author_id", "entities", "in_reply_to_user_id",
                                                    "context_annotations"],
                                      user_fields=["username"],
                                      max_results=100,
-                                     expansions='author_id', limit=1):
+                                     start_time=start_time,
+                                     end_time=end_time,
+                                     expansions='author_id', limit=10):
         tweets_data += response.data
         tweets_user += response.includes["users"]
 
@@ -169,8 +171,21 @@ def social_network_analysis(tweets):
 
     G = nx.from_pandas_edgelist(final_df, 'source', 'target')
 
+    # Pakai Louvain
     communities = sorted(nx_comm.louvain_communities(G), key=len, reverse=True)
-    nx_comm.modularity(G, communities)
+
+    # Pakai Newman
+    # k = 1
+    # comp = nx_comm.girvan_newman(G)
+    # communities = None
+    # temp = 0
+    # for comms in itertools.islice(comp, k):
+    #     print(nx_comm.modularity(G, comms))
+    #     if temp < nx_comm.modularity(G, comms):
+    #         temp = nx_comm.modularity(G, comms)
+    #         communities = comms
+
+    print(nx_comm.modularity(G, communities))
 
     modularity_dict = {}
     for i, c in enumerate(
@@ -193,7 +208,18 @@ def social_network_analysis(tweets):
 
     filtered_dict = {k: v for (k, v) in modularity_dict.items() if v < 10}
 
-    return nx.json_graph.node_link_data(G.subgraph(set(filtered_dict)))
+    fullgraph = nx.json_graph.node_link_data(G.subgraph(set(filtered_dict)))
+    subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in range(10)}
+
+    graph = {"fullgraph": fullgraph, "subgraph": subgraph}
+
+    return graph
+
+
+def get_context(array_context):
+    json = array_context
+    topic = json["topic"]
+    return " OR ".join(topic)
 
 
 @app.route('/', methods=['GET'])
@@ -203,13 +229,52 @@ def index():  # put application's code here
 
 @app.route('/market-grouping', methods=['GET'])
 def market_grouping():
+    # get_context(request.get_json())
     get_tweets = Tweet.query.all()
     tweet_schema = TweetSchema(many=True)
     tweets = tweet_schema.dump(get_tweets)
 
+    res = db.engine.execute(
+        "select date(created_at) from tweets WHERE DATE(created_at) > now() - INTERVAL 7 day group by cast(created_at as date ) order by created_at desc;")
+
+    last_date = [row[0].isoformat() for row in res]
+
     if not tweets:
-        get_data_from_api()
-        db.session.commit()
+        d = datetime.utcnow() - timedelta(days=7) + timedelta(minutes=1)
+        last_date = [str(d.strftime("%Y-%m-%d"))]
+
+    formatted_last_date = datetime.strptime(last_date[0], '%Y-%m-%d').date()
+    days = 1
+    start_time = datetime.combine(formatted_last_date + timedelta(days=days), datetime.min.time()).isoformat("T") + "Z"
+    end_time = datetime.combine(formatted_last_date + timedelta(days=days), datetime.max.time()).isoformat("T") + "Z"
+
+    if last_date[0] != str(date.today()):
+        while True:
+            try:
+                print("Masuk try")
+                get_data_from_api(start_time, end_time)
+                days += 1
+                start_time = datetime.combine(formatted_last_date + timedelta(days=days), datetime.min.time()).isoformat(
+                    "T") + "Z"
+                # print(formatted_last_date, date.today())
+                end_time = datetime.combine(formatted_last_date + timedelta(days=days) - timedelta(minutes=1),
+                                            datetime.max.time()).isoformat(
+                    "T") + "Z"
+                db.session.commit()
+            except:
+                print("Masuk sini")
+                d = datetime.utcnow() - timedelta(seconds=11)
+                end_time = d.isoformat("T") + "Z"
+                get_data_from_api(start_time, end_time)
+                break
+    #     print(last_date[0], date.today())
+    #     if last_date[0] != date.today():
+    #         get_data_from_api(start_time, end_time)
+    #         db.session.commit()
+    #         print("Data belum update!", start_time, end_time)
+    # if not tweets:
+    #     get_data_from_api(True, False)
+    #     db.session.commit()
 
     get_tweets = Tweet.query.all()
     tweet_schema = TweetSchema(many=True)
