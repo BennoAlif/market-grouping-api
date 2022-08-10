@@ -1,19 +1,20 @@
 import ast
-import tweepy
-import pandas as pd
-import networkx as nx
-from flask_cors import CORS
-from marshmallow import fields
-from flask_sqlalchemy import SQLAlchemy
-from flask_marshmallow import Marshmallow
 from datetime import datetime, timedelta, date
+
+import networkx as nx
 import networkx.algorithms.community as nx_comm
+import pandas as pd
+import tweepy
 from flask import Flask, jsonify, make_response, request
+from flask_cors import CORS
+from flask_marshmallow import Marshmallow
+from flask_sqlalchemy import SQLAlchemy
+from marshmallow import fields
 
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAEkYWAEAAAAAiCZ95QEqxNKuluivi0dNKwu%2BUIA%3DpXPhzD5xrJFlCx6roDUnzjJ6jtuh8wr2AyPhfZls4g4Yo4kH8y"
 client = tweepy.Client(bearer_token=BEARER_TOKEN)
 
-query = '(context:152.825047692124442624 OR context:66.839160129752686593 OR context:65.1256236649253449729 OR context:65.903303816698671104) lang:id'
+# query = '(context:152.825047692124442624 OR context:66.839160129752686593 OR context:65.1256236649253449729 OR context:65.903303816698671104) lang:id'
 
 ma = Marshmallow()
 
@@ -23,6 +24,70 @@ DB_NAME = 'db_market_grouping'
 # app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}'
 app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
 db = SQLAlchemy(app)
+
+entities = [
+    {
+        "name": "Fashion",
+        "context": "context:67.839543390668673024"
+    },
+    {
+        "name": "Gadgets",
+        "context": "context:131.1286204410498961408"
+    },
+    {
+        "name": "Beauty",
+        "context": "context:65.850395585941086209"
+    },
+    {
+        "name": "Entertainment",
+        "context": "context:45.781974597310615553"
+    },
+    {
+        "name": "Video games",
+        "context": "context:131.1070028159964262400"
+    },
+    {
+        "name": "Apparel/Accessories",
+        "context": "context:46.781974596715024385"
+    },
+    {
+        "name": "Books",
+        "context": "context:131.847519659179954178"
+    },
+    {
+        "name": "Movies & TV",
+        "context": "context:131.1276514328007467008"
+    },
+    {
+        "name": "Music",
+        "context": "context:131.847524658970636288"
+    },
+    {
+        "name": "Appliances",
+        "context": "context:66.864912523077615616"
+    },
+    {
+        "name": "Wellness and health",
+        "context": "context:65.903303816698671104"
+    },
+    {
+        "name": "Sports",
+        "context": "context:131.847900493514891265"
+    },
+    {
+        "name": "Pets",
+        "context": "context:131.852262932607926273"
+    },
+    {
+        "name": "Travel",
+        "context": "context:66.839160129752686593"
+    },
+    {
+        "name": "Food",
+        "context": "context:152.825047692124442624"
+    },
+
+]
 
 
 # Models
@@ -81,19 +146,19 @@ class TweetSchema(ma.Schema):
     created_at = fields.DateTime()
 
 
-def get_data_from_api(start_time, end_time):
+def get_data_from_api(query, start_time, end_time):
     tweets_data = []
     tweets_user = []
-    print("Ngambil dari API")
+    query = query + " lang:id"
     for response in tweepy.Paginator(client.search_recent_tweets,
-                                     query=query,
+                                     query=query + " lang:id",
                                      tweet_fields=["created_at", "text", "author_id", "entities", "in_reply_to_user_id",
                                                    "context_annotations"],
                                      user_fields=["username"],
-                                     max_results=100,
+                                     max_results=20,
                                      start_time=start_time,
                                      end_time=end_time,
-                                     expansions='author_id', limit=10):
+                                     expansions='author_id', limit=1):
         tweets_data += response.data
         tweets_user += response.includes["users"]
 
@@ -108,16 +173,40 @@ def get_data_from_api(start_time, end_time):
         temp_context = []
         for context in j:
             temp_context.append(context["entity"]["name"])
-        if "Fashion & beauty" in temp_context:
-            tags.append("Fashion & beauty")
+
+        if "Fashion" in temp_context:
+            tags.append("Fashion")
+        elif "Gadgets" in temp_context:
+            tags.append("Gadgets")
+        elif "Beauty" in temp_context:
+            tags.append("Beauty")
+        elif "Entertainment" in temp_context:
+            tags.append("Entertainment")
+        elif "Video games" in temp_context:
+            tags.append("Video games")
+        elif "Apparel/Accessories" in temp_context:
+            tags.append("Apparel/Accessories")
+        elif "Books" in temp_context:
+            tags.append("Books")
+        elif "Movies & TV" in temp_context:
+            tags.append("Movies & TV")
+        elif "Music" in temp_context:
+            tags.append("Music")
+        elif "Appliances" in temp_context:
+            tags.append("Appliances")
+        elif "Wellness and health" in temp_context:
+            tags.append("Wellness and health")
+        elif "Sports" in temp_context:
+            tags.append("Sports")
+        elif "Pets" in temp_context:
+            tags.append("Pets")
         elif "Travel" in temp_context or "General Travel" in temp_context:
             tags.append("Travel")
         elif "Food" in temp_context:
             tags.append("Food")
-        elif "Wellness and health" in temp_context:
-            tags.append("Wellness and health")
         else:
             tags.append("Other")
+
         tweets_data_df["context_annotations"][i] = temp_context
 
     tweets_data_df.insert(6, 'tag', tags)
@@ -147,9 +236,7 @@ def social_network_analysis(tweets):
     mentions = []
 
     for i in range(len(tweets_db_df)):
-        # if isinstance((tweets_db_df["entities"][i]), str) or tweets_db_df["entities"][0] != "nan":
         if (tweets_db_df["entities"][i]) != "nan":
-            # print((tweets_db_df["entities"][i]) != "nan")
             if "mentions" in eval(tweets_db_df["entities"][i]).keys():
                 mention = {
                     "id": tweets_db_df["id"][i],
@@ -173,17 +260,6 @@ def social_network_analysis(tweets):
 
     # Pakai Louvain
     communities = sorted(nx_comm.louvain_communities(G), key=len, reverse=True)
-
-    # Pakai Newman
-    # k = 1
-    # comp = nx_comm.girvan_newman(G)
-    # communities = None
-    # temp = 0
-    # for comms in itertools.islice(comp, k):
-    #     print(nx_comm.modularity(G, comms))
-    #     if temp < nx_comm.modularity(G, comms):
-    #         temp = nx_comm.modularity(G, comms)
-    #         communities = comms
 
     print(nx_comm.modularity(G, communities))
 
@@ -218,8 +294,21 @@ def social_network_analysis(tweets):
 
 def get_context(array_context):
     json = array_context
-    topic = json["topic"]
-    return " OR ".join(topic)
+    topics = json["topic"]
+    contexts = []
+    for topic in entities:
+        if topic["name"] in topics:
+            contexts.append(topic["context"])
+
+    return " OR ".join(contexts)
+
+
+def context_to_query(array_context):
+    json = array_context
+    topics = json["topic"]
+    query_sql = ["tag = '" + i + "'" for i in topics]
+
+    return " OR ".join(query_sql)
 
 
 @app.route('/', methods=['GET'])
@@ -227,19 +316,19 @@ def index():  # put application's code here
     return make_response(jsonify({"data": "Hello world"}))
 
 
-@app.route('/market-grouping', methods=['GET'])
+@app.route('/market-grouping', methods=['POST'])
 def market_grouping():
-    # get_context(request.get_json())
+    query = get_context(request.get_json())
+    query_sql = context_to_query(request.get_json())
     get_tweets = Tweet.query.all()
     tweet_schema = TweetSchema(many=True)
     tweets = tweet_schema.dump(get_tweets)
-
-    res = db.engine.execute(
-        "select date(created_at) from tweets WHERE DATE(created_at) > now() - INTERVAL 7 day group by cast(created_at as date ) order by created_at desc;")
+    sql = "select date(created_at) from tweets WHERE DATE(created_at) > now() - INTERVAL 7 day and " + query_sql + " group by cast(created_at as date ) order by created_at desc;"
+    res = db.engine.execute(sql)
 
     last_date = [row[0].isoformat() for row in res]
 
-    if not tweets:
+    if not last_date:
         d = datetime.utcnow() - timedelta(days=7) + timedelta(minutes=1)
         last_date = [str(d.strftime("%Y-%m-%d"))]
 
@@ -251,30 +340,20 @@ def market_grouping():
     if last_date[0] != str(date.today()):
         while True:
             try:
-                print("Masuk try")
-                get_data_from_api(start_time, end_time)
+                get_data_from_api(query, start_time, end_time)
                 days += 1
-                start_time = datetime.combine(formatted_last_date + timedelta(days=days), datetime.min.time()).isoformat(
+                start_time = datetime.combine(formatted_last_date + timedelta(days=days),
+                                              datetime.min.time()).isoformat(
                     "T") + "Z"
-                # print(formatted_last_date, date.today())
                 end_time = datetime.combine(formatted_last_date + timedelta(days=days) - timedelta(minutes=1),
                                             datetime.max.time()).isoformat(
                     "T") + "Z"
                 db.session.commit()
             except:
-                print("Masuk sini")
                 d = datetime.utcnow() - timedelta(seconds=11)
                 end_time = d.isoformat("T") + "Z"
-                get_data_from_api(start_time, end_time)
+                get_data_from_api(query, start_time, end_time)
                 break
-    #     print(last_date[0], date.today())
-    #     if last_date[0] != date.today():
-    #         get_data_from_api(start_time, end_time)
-    #         db.session.commit()
-    #         print("Data belum update!", start_time, end_time)
-    # if not tweets:
-    #     get_data_from_api(True, False)
-    #     db.session.commit()
 
     get_tweets = Tweet.query.all()
     tweet_schema = TweetSchema(many=True)
