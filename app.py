@@ -11,6 +11,8 @@ from flask_marshmallow import Marshmallow
 from flask_sqlalchemy import SQLAlchemy
 from marshmallow import fields
 
+import louvain
+
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAEkYWAEAAAAAiCZ95QEqxNKuluivi0dNKwu%2BUIA%3DpXPhzD5xrJFlCx6roDUnzjJ6jtuh8wr2AyPhfZls4g4Yo4kH8y"
 client = tweepy.Client(bearer_token=BEARER_TOKEN)
 
@@ -21,11 +23,15 @@ ma = Marshmallow()
 app = Flask(__name__)
 CORS(app)
 DB_NAME = 'db_market_grouping'
-# app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}'
-app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
+ADDRESS = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}?charset=utf8mb4'
+app.config['SQLALCHEMY_DATABASE_URI'] = ADDRESS
+# app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
+# app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:`c)x:%IcS9:(a]x1@34.140.36.13/{DB_NAME}?ssl_verify_identity=true'
 db = SQLAlchemy(app)
 
-entities = [
+# engine = create_engine(ADDRESS)
+
+context_entities = [
     {
         "name": "Fashion",
         "context": "context:67.839543390668673024"
@@ -89,12 +95,11 @@ entities = [
 
 ]
 
-
 # Models
 class Tweet(db.Model):
     __tablename__ = "tweets"
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=False)
-    text = db.Column(db.String(255))
+    text = db.Column(db.TEXT)
     username = db.Column(db.String(15))
     name = db.Column(db.String(50))
     context_annotations = db.Column(db.TEXT)
@@ -150,8 +155,10 @@ def get_data_from_api(query, start_time, end_time):
     tweets_data = []
     tweets_user = []
     query = query + " lang:id"
+    print(query)
+    # print(start_time, end_time)
     for response in tweepy.Paginator(client.search_recent_tweets,
-                                     query=query + " lang:id",
+                                     query=query,
                                      tweet_fields=["created_at", "text", "author_id", "entities", "in_reply_to_user_id",
                                                    "context_annotations"],
                                      user_fields=["username"],
@@ -164,7 +171,7 @@ def get_data_from_api(query, start_time, end_time):
 
     tweets_data_df = pd.DataFrame(tweets_data)
     tweets_user_df = pd.DataFrame(tweets_user)
-
+    # print(tweets_data_df["in_reply_to_user_id"])
     tweets_data_df["in_reply_to_user_id"] = tweets_data_df["in_reply_to_user_id"].astype("Int64")
     # tweets_data_df["created_at"] = tweets_data_df["created_at"].dt.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -217,32 +224,37 @@ def get_data_from_api(query, start_time, end_time):
     tweets_df = tweets_user_df.rename(columns={"id": "author_id"})
     tweets_df = tweets_df.drop_duplicates()
     df = tweets_data_df.merge(tweets_df, left_on='author_id', right_on='author_id')
+
+    print("Sebelum sql")
     df.to_sql(name='tweets', con=db.engine, index=False, if_exists='append')
+    print("Setelah sql")
 
 
 def social_network_analysis(tweets):
     tweets_db_df = pd.DataFrame(tweets)
+    in_reply_to_user_df = []
+    if "in_reply_to_user_id" in tweets_db_df.keys():
+        in_reply_to_user_df = tweets_db_df[tweets_db_df['in_reply_to_user_id'].notna()]
 
-    in_reply_to_user_df = tweets_db_df[tweets_db_df['in_reply_to_user_id'].notna()]
-
-    in_reply_to_user_df = in_reply_to_user_df.merge(tweets_db_df, left_on='in_reply_to_user_id',
-                                                    right_on='author_id')
-    in_reply_to_user_df = in_reply_to_user_df.rename(
-        columns={"username_x": "target", "username_y": "source", "context_annotations_x": "context_annotations",
-                 "text_x": "text", "tag_x": 'tag'})
-    in_reply_to_user_df = in_reply_to_user_df[["source", "target", "context_annotations", "text", "tag"]]
-    in_reply_to_user_df = in_reply_to_user_df.drop_duplicates(keep='first', ignore_index=True)
+        in_reply_to_user_df = in_reply_to_user_df.merge(tweets_db_df, left_on='in_reply_to_user_id',
+                                                        right_on='author_id')
+        in_reply_to_user_df = in_reply_to_user_df.rename(
+            columns={"username_x": "target", "username_y": "source", "context_annotations_x": "context_annotations",
+                     "text_x": "text", "tag_x": 'tag'})
+        in_reply_to_user_df = in_reply_to_user_df[["source", "target", "context_annotations", "text", "tag"]]
+        in_reply_to_user_df = in_reply_to_user_df.drop_duplicates(keep='first', ignore_index=True)
 
     mentions = []
 
     for i in range(len(tweets_db_df)):
-        if (tweets_db_df["entities"][i]) != "nan":
-            if "mentions" in eval(tweets_db_df["entities"][i]).keys():
-                mention = {
-                    "id": tweets_db_df["id"][i],
-                    "mention_username": eval(tweets_db_df["entities"][i]).get("mentions")[0].get("username")
-                }
-                mentions.append(mention)
+        if "entities" in tweets_db_df.keys():
+            if (tweets_db_df["entities"][i]) != "nan":
+                if "mentions" in eval(tweets_db_df["entities"][i]).keys():
+                    mention = {
+                        "id": tweets_db_df["id"][i],
+                        "mention_username": eval(tweets_db_df["entities"][i]).get("mentions")[0].get("username")
+                    }
+                    mentions.append(mention)
 
     mentions_df = pd.DataFrame(mentions)
 
@@ -259,7 +271,7 @@ def social_network_analysis(tweets):
     G = nx.from_pandas_edgelist(final_df, 'source', 'target')
 
     # Pakai Louvain
-    communities = sorted(nx_comm.louvain_communities(G), key=len, reverse=True)
+    communities = sorted(louvain.louvain_communities(G), key=len, reverse=True)
 
     print(nx_comm.modularity(G, communities))
 
@@ -285,6 +297,9 @@ def social_network_analysis(tweets):
     filtered_dict = {k: v for (k, v) in modularity_dict.items() if v < 10}
 
     fullgraph = nx.json_graph.node_link_data(G.subgraph(set(filtered_dict)))
+
+    # for i in range(10):
+    #     print(communities[i])
     subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in range(10)}
 
     graph = {"fullgraph": fullgraph, "subgraph": subgraph}
@@ -292,20 +307,18 @@ def social_network_analysis(tweets):
     return graph
 
 
-def get_context(array_context):
-    json = array_context
-    topics = json["topic"]
+def get_context(topics):
+
     contexts = []
-    for topic in entities:
+    for topic in context_entities:
         if topic["name"] in topics:
             contexts.append(topic["context"])
 
     return " OR ".join(contexts)
 
 
-def context_to_query(array_context):
-    json = array_context
-    topics = json["topic"]
+def context_to_query(topics):
+
     query_sql = ["tag = '" + i + "'" for i in topics]
 
     return " OR ".join(query_sql)
@@ -318,12 +331,15 @@ def index():  # put application's code here
 
 @app.route('/market-grouping', methods=['POST'])
 def market_grouping():
-    query = get_context(request.get_json())
-    query_sql = context_to_query(request.get_json())
-    get_tweets = Tweet.query.all()
-    tweet_schema = TweetSchema(many=True)
-    tweets = tweet_schema.dump(get_tweets)
+    json = request.get_json()
+    topics = json["topic"]
+    query = get_context(topics)
+    query_sql = context_to_query(topics)
+    # get_tweets = Tweet.query.all()
+    # tweet_schema = TweetSchema(many=True)
+    # tweets = tweet_schema.dump(get_tweets)
     sql = "select date(created_at) from tweets WHERE DATE(created_at) > now() - INTERVAL 7 day and " + query_sql + " group by cast(created_at as date ) order by created_at desc;"
+    print(sql)
     res = db.engine.execute(sql)
 
     last_date = [row[0].isoformat() for row in res]
@@ -355,7 +371,7 @@ def market_grouping():
                 get_data_from_api(query, start_time, end_time)
                 break
 
-    get_tweets = Tweet.query.all()
+    get_tweets = Tweet.query.filter(Tweet.tag.in_(topics)).all()
     tweet_schema = TweetSchema(many=True)
     tweets = tweet_schema.dump(get_tweets)
 
