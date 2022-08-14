@@ -94,10 +94,12 @@ context_entities = [
 
 ]
 
+
 # Models
 class Tweet(db.Model):
     __tablename__ = "tweets"
-    id = db.Column(db.String(20), primary_key=True, autoincrement=False)
+    uid = db.Column(db.Integer, unique=True, primary_key=True, autoincrement=True)
+    id = db.Column(db.String(20))
     text = db.Column(db.TEXT)
     username = db.Column(db.String(15))
     name = db.Column(db.String(50))
@@ -113,8 +115,9 @@ class Tweet(db.Model):
         db.session.commit()
         return self
 
-    def __init__(self, id, text, username, name, context_annotations, tag, entities, in_reply_to_user_id, author_id,
+    def __init__(self, uid, id, text, username, name, context_annotations, tag, entities, in_reply_to_user_id, author_id,
                  created_at):
+        self.uid = uid
         self.id = id
         self.text = text
         self.username = username
@@ -138,6 +141,7 @@ class TweetSchema(ma.Schema):
         model = Tweet
         sqla_session = db.session
 
+    id = fields.Number()
     id = fields.String()
     text = fields.String()
     username = fields.String()
@@ -154,7 +158,7 @@ def get_data_from_api(query, start_time, end_time):
     tweets_data = []
     tweets_user = []
     query = query + " lang:id"
-    print(query)
+    print(start_time, end_time)
     # print(start_time, end_time)
     for response in tweepy.Paginator(client.search_recent_tweets,
                                      query=query,
@@ -229,6 +233,7 @@ def get_data_from_api(query, start_time, end_time):
 
 def social_network_analysis(tweets):
     tweets_db_df = pd.DataFrame(tweets)
+    print(len(tweets))
     in_reply_to_user_df = []
     if "in_reply_to_user_id" in tweets_db_df.keys():
         in_reply_to_user_df = tweets_db_df[tweets_db_df['in_reply_to_user_id'].notna()]
@@ -302,7 +307,8 @@ def social_network_analysis(tweets):
     #     print(communities[i])
     subgraph = {}
     if len(communities) >= 10:
-        subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in range(10)}
+        subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in
+                    range(10)}
     else:
         subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in
                     range(len(communities))}
@@ -312,7 +318,6 @@ def social_network_analysis(tweets):
 
 
 def get_context(topics):
-
     contexts = []
     for topic in context_entities:
         if topic["name"] in topics:
@@ -322,7 +327,6 @@ def get_context(topics):
 
 
 def context_to_query(topics):
-
     query_sql = ["tag = '" + i + "'" for i in topics]
 
     return " OR ".join(query_sql)
@@ -357,20 +361,25 @@ def market_grouping():
     start_time = datetime.combine(formatted_last_date + timedelta(days=days), datetime.min.time()).isoformat("T") + "Z"
     end_time = datetime.combine(formatted_last_date + timedelta(days=days), datetime.max.time()).isoformat("T") + "Z"
 
-    if last_date[0] != str(date.today()):
-        while True:
+    last_week = [(date.today() - timedelta(days=i)).isoformat() for i in range(7) if
+                 (date.today() - timedelta(days=i)).isoformat() not in last_date]
+    print(len(last_week))
+    if len(last_week) != 0:
+        for i in last_week[::-1]:
             try:
-                get_data_from_api(query, start_time, end_time)
+
                 days += 1
-                start_time = datetime.combine(formatted_last_date + timedelta(days=days),
+                start_time = datetime.combine(datetime.strptime(i, '%Y-%m-%d').date(),
                                               datetime.min.time()).isoformat(
                     "T") + "Z"
-                end_time = datetime.combine(formatted_last_date + timedelta(days=days) - timedelta(minutes=1),
-                                            datetime.max.time()).isoformat(
+                end_time = datetime.combine(
+                    datetime.strptime(i, '%Y-%m-%d').date(),
+                    datetime.max.time()).isoformat(
                     "T") + "Z"
+                get_data_from_api(query, start_time, end_time)
                 db.session.commit()
             except:
-                d = datetime.utcnow() - timedelta(seconds=11)
+                d = datetime.utcnow() - timedelta(minutes=1)
                 end_time = d.isoformat("T") + "Z"
                 get_data_from_api(query, start_time, end_time)
                 break
