@@ -10,7 +10,6 @@ from flask_cors import CORS
 from flask_marshmallow import Marshmallow
 from flask_sqlalchemy import SQLAlchemy
 from marshmallow import fields
-
 import louvain
 
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAEkYWAEAAAAAiCZ95QEqxNKuluivi0dNKwu%2BUIA%3DpXPhzD5xrJFlCx6roDUnzjJ6jtuh8wr2AyPhfZls4g4Yo4kH8y"
@@ -98,7 +97,7 @@ context_entities = [
 # Models
 class Tweet(db.Model):
     __tablename__ = "tweets"
-    id = db.Column(db.BigInteger, primary_key=True, autoincrement=False)
+    id = db.Column(db.String(20), primary_key=True, autoincrement=False)
     text = db.Column(db.TEXT)
     username = db.Column(db.String(15))
     name = db.Column(db.String(50))
@@ -139,7 +138,7 @@ class TweetSchema(ma.Schema):
         model = Tweet
         sqla_session = db.session
 
-    id = fields.Number()
+    id = fields.String()
     text = fields.String()
     username = fields.String()
     name = fields.String()
@@ -162,10 +161,10 @@ def get_data_from_api(query, start_time, end_time):
                                      tweet_fields=["created_at", "text", "author_id", "entities", "in_reply_to_user_id",
                                                    "context_annotations"],
                                      user_fields=["username"],
-                                     max_results=20,
+                                     max_results=100,
                                      start_time=start_time,
                                      end_time=end_time,
-                                     expansions='author_id', limit=1):
+                                     expansions='author_id', limit=10):
         tweets_data += response.data
         tweets_user += response.includes["users"]
 
@@ -225,9 +224,7 @@ def get_data_from_api(query, start_time, end_time):
     tweets_df = tweets_df.drop_duplicates()
     df = tweets_data_df.merge(tweets_df, left_on='author_id', right_on='author_id')
 
-    print("Sebelum sql")
     df.to_sql(name='tweets', con=db.engine, index=False, if_exists='append')
-    print("Setelah sql")
 
 
 def social_network_analysis(tweets):
@@ -240,8 +237,8 @@ def social_network_analysis(tweets):
                                                         right_on='author_id')
         in_reply_to_user_df = in_reply_to_user_df.rename(
             columns={"username_x": "target", "username_y": "source", "context_annotations_x": "context_annotations",
-                     "text_x": "text", "tag_x": 'tag'})
-        in_reply_to_user_df = in_reply_to_user_df[["source", "target", "context_annotations", "text", "tag"]]
+                     "text_x": "text", "tag_x": 'tag', "id_x": "id"})
+        in_reply_to_user_df = in_reply_to_user_df[["source", "target", "id", "context_annotations", "text", "tag"]]
         in_reply_to_user_df = in_reply_to_user_df.drop_duplicates(keep='first', ignore_index=True)
 
     mentions = []
@@ -261,7 +258,7 @@ def social_network_analysis(tweets):
     tweets_mention_df = mentions_df.merge(tweets_db_df, left_on='id', right_on='id')
 
     user_mentions_df = tweets_mention_df.rename(columns={"username": "source", "mention_username": "target"})
-    user_mentions_df = user_mentions_df[["source", "target", "context_annotations", "text", "tag"]]
+    user_mentions_df = user_mentions_df[["source", "target", "id", "context_annotations", "text", "tag"]]
     user_mentions_df = user_mentions_df.drop_duplicates(keep='first', ignore_index=True)
 
     final_df = pd.concat([in_reply_to_user_df, user_mentions_df], ignore_index=True)
@@ -291,6 +288,9 @@ def social_network_analysis(tweets):
     tags = {(j["source"], j["target"]): (j["tag"]) for i, j in final_df.iterrows()}
     nx.set_edge_attributes(G, tags, "tag")
 
+    ids = {(j["source"], j["target"]): (j["id"]) for i, j in final_df.iterrows()}
+    nx.set_edge_attributes(G, ids, "id")
+
     text = {(j["source"], j["target"]): j["text"] for i, j in final_df.iterrows()}
     nx.set_edge_attributes(G, text, "text")
 
@@ -300,8 +300,12 @@ def social_network_analysis(tweets):
 
     # for i in range(10):
     #     print(communities[i])
-    subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in range(10)}
-
+    subgraph = {}
+    if len(communities) >= 10:
+        subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in range(10)}
+    else:
+        subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in
+                    range(len(communities))}
     graph = {"fullgraph": fullgraph, "subgraph": subgraph}
 
     return graph
