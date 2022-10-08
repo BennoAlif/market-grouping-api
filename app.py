@@ -15,20 +15,16 @@ import louvain
 BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAEkYWAEAAAAAiCZ95QEqxNKuluivi0dNKwu%2BUIA%3DpXPhzD5xrJFlCx6roDUnzjJ6jtuh8wr2AyPhfZls4g4Yo4kH8y"
 client = tweepy.Client(bearer_token=BEARER_TOKEN)
 
-# query = '(context:152.825047692124442624 OR context:66.839160129752686593 OR context:65.1256236649253449729 OR context:65.903303816698671104) lang:id'
-
 ma = Marshmallow()
 
 app = Flask(__name__)
 CORS(app)
 DB_NAME = 'db_market_grouping'
-ADDRESS = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}?charset=utf8mb4'
-app.config['SQLALCHEMY_DATABASE_URI'] = ADDRESS
-# app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
+# ADDRESS = f'mysql+pymysql://benno:Loking123@market-grouping.mysql.database.azure.com:3306/{DB_NAME}?charset=utf8mb4'
+# app.config['SQLALCHEMY_DATABASE_URI'] = ADDRESS
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:@localhost:3306/{DB_NAME}'
 # app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:`c)x:%IcS9:(a]x1@34.140.36.13/{DB_NAME}?ssl_verify_identity=true'
 db = SQLAlchemy(app)
-
-# engine = create_engine(ADDRESS)
 
 context_entities = [
     {
@@ -129,10 +125,6 @@ class Tweet(db.Model):
         self.author_id = author_id
         self.created_at = created_at
 
-    # def __repr__(self):
-    #     return '' % self.id
-
-
 db.create_all()
 
 
@@ -158,8 +150,6 @@ def get_data_from_api(query, start_time, end_time):
     tweets_data = []
     tweets_user = []
     query = query + " lang:id"
-    print(start_time, end_time)
-    # print(start_time, end_time)
     for response in tweepy.Paginator(client.search_recent_tweets,
                                      query=query,
                                      tweet_fields=["created_at", "text", "author_id", "entities", "in_reply_to_user_id",
@@ -174,9 +164,7 @@ def get_data_from_api(query, start_time, end_time):
 
     tweets_data_df = pd.DataFrame(tweets_data)
     tweets_user_df = pd.DataFrame(tweets_user)
-    # print(tweets_data_df["in_reply_to_user_id"])
     tweets_data_df["in_reply_to_user_id"] = tweets_data_df["in_reply_to_user_id"].astype("Int64")
-    # tweets_data_df["created_at"] = tweets_data_df["created_at"].dt.strftime('%Y-%m-%d %H:%M:%S')
 
     tags = []
     for i, j in enumerate(tweets_data_df["context_annotations"]):
@@ -227,13 +215,12 @@ def get_data_from_api(query, start_time, end_time):
     tweets_df = tweets_user_df.rename(columns={"id": "author_id"})
     tweets_df = tweets_df.drop_duplicates()
     df = tweets_data_df.merge(tweets_df, left_on='author_id', right_on='author_id')
-
+    df.drop('edit_history_tweet_ids', axis=1, inplace=True)
     df.to_sql(name='tweets', con=db.engine, index=False, if_exists='append')
 
 
 def social_network_analysis(tweets):
     tweets_db_df = pd.DataFrame(tweets)
-    print(len(tweets))
     in_reply_to_user_df = []
     if "in_reply_to_user_id" in tweets_db_df.keys():
         in_reply_to_user_df = tweets_db_df[tweets_db_df['in_reply_to_user_id'].notna()]
@@ -275,7 +262,7 @@ def social_network_analysis(tweets):
     # Pakai Louvain
     communities = sorted(louvain.louvain_communities(G), key=len, reverse=True)
 
-    print(nx_comm.modularity(G, communities))
+
 
     modularity_dict = {}
     for i, c in enumerate(
@@ -303,12 +290,10 @@ def social_network_analysis(tweets):
 
     fullgraph = nx.json_graph.node_link_data(G.subgraph(set(filtered_dict)))
 
-    # for i in range(10):
-    #     print(communities[i])
     subgraph = {}
     if len(communities) >= 10:
         subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in
-                    range(10)}
+                    range(5)}
     else:
         subgraph = {"subgraph" + str(i + 1): nx.json_graph.node_link_data(G.subgraph(communities[i])) for i in
                     range(len(communities))}
@@ -343,11 +328,8 @@ def market_grouping():
     topics = json["topic"]
     query = get_context(topics)
     query_sql = context_to_query(topics)
-    # get_tweets = Tweet.query.all()
-    # tweet_schema = TweetSchema(many=True)
-    # tweets = tweet_schema.dump(get_tweets)
     sql = "select date(created_at) from tweets WHERE DATE(created_at) > now() - INTERVAL 7 day and " + query_sql + " group by cast(created_at as date ) order by created_at desc;"
-    print(sql)
+
     res = db.engine.execute(sql)
 
     last_date = [row[0].isoformat() for row in res]
@@ -363,7 +345,7 @@ def market_grouping():
 
     last_week = [(date.today() - timedelta(days=i)).isoformat() for i in range(7) if
                  (date.today() - timedelta(days=i)).isoformat() not in last_date]
-    print(len(last_week))
+
     if len(last_week) != 0:
         for i in last_week[::-1]:
             try:
